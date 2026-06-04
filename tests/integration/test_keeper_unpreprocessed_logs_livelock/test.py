@@ -8,7 +8,10 @@ Background
 With `async_replication` + `nuraft_streaming_mode` + `use_new_dispatcher` (the
 defaults), the follower handles `append_entries` on the pipelined,
 parallel-log-appending path. A freshly restarted node whose on-disk logs are not
-covered by a snapshot has `localLogsPreprocessed() == false` until it manages to
+covered by a snapshot has `localLogsPreprocessed() == false`
+[[UPDATE: localLogsPreprocessed() doesn't exist anymore, and this class of bug is
+  no longer possible, but we're keeping this test anyway just in case]]
+until it manages to
 commit those logs. While in that state, `KeeperServer::callbackFunc`
 (`GotAppendEntryReqFromLeader`) clears the log entries of every incoming
 `append_entries` request. The (now empty) request then went down a code path in

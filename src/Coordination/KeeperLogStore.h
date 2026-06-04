@@ -18,6 +18,7 @@ public:
 
     /// Read log storage from filesystem starting from last_commited_log_index
     void init(uint64_t last_commited_log_index, uint64_t logs_to_keep);
+    bool isInitialized() const { return is_initialized.load(); }
 
     uint64_t start_index() const override;
 
@@ -84,6 +85,7 @@ private:
     mutable SharedMutex changelog_lock;
     LoggerPtr log;
     Changelog changelog TSA_GUARDED_BY(changelog_lock);
+    std::atomic<bool> is_initialized {false};
 };
 
 }

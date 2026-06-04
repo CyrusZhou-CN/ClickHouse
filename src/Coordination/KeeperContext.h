@@ -93,11 +93,6 @@ public:
         return shutdown_called;
     }
 
-    void setLocalLogsPreprocessed();
-    bool localLogsPreprocessed() const;
-
-    void waitLocalLogsPreprocessedOrShutdown();
-
     uint64_t lastCommittedIndex() const;
     void setLastCommitIndex(uint64_t commit_index);
     /// returns true if the log is committed, false if timeout happened
@@ -139,12 +134,6 @@ private:
 
     DiskPtr getDisk(const Storage & storage) const;
 
-    std::mutex local_logs_preprocessed_cv_mutex;
-    std::condition_variable local_logs_preprocessed_cv;
-
-    /// set to true when we have preprocessed or committed all the logs
-    /// that were already present locally during startup
-    std::atomic<bool> local_logs_preprocessed = false;
     std::atomic<bool> shutdown_called = false;
 
     std::atomic<Phase> server_state{Phase::INIT};

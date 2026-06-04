@@ -88,7 +88,6 @@ public:
         (*settings)[DB::CoordinationSetting::experimental_use_rocksdb] = 0;
 #endif
         keeper_context = std::make_shared<DB::KeeperContext>(true, settings);
-        keeper_context->setLocalLogsPreprocessed();
         keeper_context->setRocksDBOptions();
         extension = enable_compression ? ".zstd" : "";
     }

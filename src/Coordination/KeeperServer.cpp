@@ -81,7 +81,6 @@ namespace CoordinationSetting
     extern const CoordinationSettingsUInt64 raft_limits_reconnect_limit;
     extern const CoordinationSettingsUInt64 raft_limits_response_limit;
     extern const CoordinationSettingsLogsLevel raft_logs_level;
-    extern const CoordinationSettingsUInt64 reserved_log_items;
     extern const CoordinationSettingsMilliseconds shutdown_timeout;
     extern const CoordinationSettingsUInt64 snapshot_distance;
     extern const CoordinationSettingsUInt64 stale_log_gap;
@@ -93,6 +92,7 @@ namespace CoordinationSetting
     extern const CoordinationSettingsUInt64 nuraft_max_uncommitted_log_entries;
     extern const CoordinationSettingsUInt64 nuraft_append_entries_backward_probe_throttle_threshold;
     extern const CoordinationSettingsBool use_new_dispatcher;
+    extern const CoordinationSettingsUInt64 reserved_log_items;
 }
 
 namespace ErrorCodes
@@ -284,6 +284,13 @@ KeeperServer::KeeperServer(
     if (coordination_settings[CoordinationSetting::quorum_reads])
         LOG_WARNING(log, "Quorum reads enabled, Keeper will work slower.");
 
+    state_manager = nuraft::cs_new<KeeperStateManager>(
+        server_id,
+        "keeper_server",
+        "state",
+        config,
+        keeper_context);
+
 #if USE_ROCKSDB
     if (coordination_settings[CoordinationSetting::experimental_use_rocksdb])
     {
@@ -292,6 +299,7 @@ KeeperServer::KeeperServer(
             snapshots_queue_,
             keeper_context,
             config.getBool("keeper_server.upload_snapshot_on_exit", false) ? &snapshot_manager_s3 : nullptr,
+            state_manager->getLogStore().get(),
             commit_callback,
             checkAndGetSuperdigest(server_config->super_digest));
         LOG_WARNING(log, "Use RocksDB as Keeper backend storage.");
@@ -303,15 +311,9 @@ KeeperServer::KeeperServer(
             snapshots_queue_,
             keeper_context,
             config.getBool("keeper_server.upload_snapshot_on_exit", false) ? &snapshot_manager_s3 : nullptr,
+            state_manager->getLogStore().get(),
             commit_callback,
             checkAndGetSuperdigest(server_config->super_digest));
-
-    state_manager = nuraft::cs_new<KeeperStateManager>(
-        server_id,
-        "keeper_server",
-        "state",
-        config,
-        keeper_context);
 }
 
 bool KeeperServer::KeeperRaftServer::isClusterHealthy()
@@ -390,11 +392,6 @@ void KeeperServer::KeeperRaftServer::append_entries_in_bg()
     DB::setThreadName(ThreadName::KEEPER_APPEND);
     LockMemoryExceptionInThread blocker{VariableContext::Global};
     nuraft::raft_server::append_entries_in_bg();
-}
-
-std::unique_lock<std::recursive_mutex> KeeperServer::KeeperRaftServer::lockRaft()
-{
-    return std::unique_lock(lock_);
 }
 
 bool KeeperServer::KeeperRaftServer::isCommitInProgress() const
@@ -697,20 +694,7 @@ void KeeperServer::startup(const Poco::Util::AbstractConfiguration & config, boo
 {
     state_machine->init();
 
-    keeper_context->setLastCommitIndex(state_machine->last_commit_index());
-
     const auto & coordination_settings = keeper_context->getFixedCoordinationSettings();
-
-    state_manager->loadLogStore(state_machine->last_commit_index(), coordination_settings[CoordinationSetting::reserved_log_items]);
-
-    auto log_store = state_manager->load_log_store();
-    last_log_idx_on_disk = log_store->next_slot() - 1;
-    LOG_TRACE(log, "Last local log idx {}", last_log_idx_on_disk.load());
-    if (state_machine->last_commit_index() >= last_log_idx_on_disk)
-    {
-        LOG_INFO(log, "No log preprocessing needed (last_commit_index={} >= last_log_idx_on_disk={})", state_machine->last_commit_index(), last_log_idx_on_disk.load());
-        keeper_context->setLocalLogsPreprocessed();
-    }
 
     loadLatestConfig();
 
@@ -886,126 +870,6 @@ nuraft::cb_func::ReturnCode KeeperServer::callbackFunc(nuraft::cb_func::Type typ
         }
     }
 
-    if (!keeper_context->localLogsPreprocessed())
-    {
-        const auto preprocess_logs = [&]
-        {
-            auto lock = raft_instance->lockRaft();
-
-            if (keeper_context->localLogsPreprocessed())
-                return;
-
-            keeper_context->setLocalLogsPreprocessed();
-            auto log_store = state_manager->load_log_store();
-            auto log_entries = log_store->log_entries(state_machine->last_commit_index() + 1, log_store->next_slot());
-
-            if (log_entries->empty())
-            {
-                LOG_INFO(log, "All local log entries preprocessed");
-                return;
-            }
-
-            size_t preprocessed = 0;
-            LOG_INFO(log, "Preprocessing {} log entries", log_entries->size());
-            auto idx = state_machine->last_commit_index() + 1;
-            for (const auto & entry : *log_entries)
-            {
-                if (entry && entry->get_val_type() == nuraft::log_val_type::app_log)
-                    state_machine->pre_commit(idx, entry->get_buf());
-
-                ++idx;
-                ++preprocessed;
-
-                if (preprocessed % 50000 == 0)
-                    LOG_TRACE(log, "Preprocessed {}/{} entries", preprocessed, log_entries->size());
-            }
-            LOG_INFO(log, "Preprocessing done");
-        };
-
-        switch (type)
-        {
-            case nuraft::cb_func::PreAppendLogLeader:
-            {
-                /// we cannot preprocess anything new as leader because we don't have up-to-date in-memory state
-                /// until we preprocess all stored logs
-                return nuraft::cb_func::ReturnCode::ReturnNull;
-            }
-            case nuraft::cb_func::ProcessReq:
-            {
-                auto & req = *static_cast<nuraft::req_msg *>(param->ctx);
-
-                if (req.get_type() != nuraft::msg_type::append_entries_request)
-                    break;
-
-                if (req.log_entries().empty())
-                    break;
-
-                LOG_TRACE(
-                    log,
-                    "Logs not preprocessed, ProcessReq callback with {} entries, last_commit_index={}, last_log_idx_on_disk={}, "
-                    "isCommitInProgress={}, get_target_committed_log_idx={}",
-                    req.log_entries().size(),
-                    state_machine->last_commit_index(),
-                    last_log_idx_on_disk.load(),
-                    raft_instance->isCommitInProgress(),
-                    raft_instance->get_target_committed_log_idx());
-
-                /// committing/preprocessing of local logs can take some time
-                /// and we don't want election to start during that time so we
-                /// set serving requests to avoid elections on timeout
-                raft_instance->setServingRequest(true);
-                SCOPE_EXIT(raft_instance->setServingRequest(false));
-                /// maybe we got snapshot installed
-                if (state_machine->last_commit_index() >= last_log_idx_on_disk && !raft_instance->isCommitInProgress())
-                {
-                    LOG_TRACE(log, "Logs not preprocessed, ProcessReq callback: preprocessing logs");
-                    preprocess_logs();
-                }
-                /// we don't want to append new logs if we are committing local logs
-                else if (raft_instance->get_target_committed_log_idx() >= last_log_idx_on_disk)
-                {
-                    LOG_TRACE(log, "Logs not preprocessed, ProcessReq callback: waiting for preprocessing");
-                    keeper_context->waitLocalLogsPreprocessedOrShutdown();
-                }
-                else
-                {
-                    LOG_TRACE(log, "Logs not preprocessed, ProcessReq callback: ignoring");
-                }
-
-                break;
-            }
-            case nuraft::cb_func::GotAppendEntryReqFromLeader:
-            {
-                auto & req = *static_cast<nuraft::req_msg *>(param->ctx);
-
-                if (req.log_entries().empty())
-                    break;
-
-                LOG_TRACE(log, "Logs not preprocessed, GotAppendEntryReqFromLeader callback with last_log_idx={}, current last_log_idx_on_disk={}, dropping {} entries from the request", req.get_last_log_idx(), last_log_idx_on_disk.load(), req.log_entries().size());
-
-                /// we need to rollback some local logs so we set last_log_idx_on_disk
-                /// to the last common log index from leader
-                if (req.get_last_log_idx() < last_log_idx_on_disk)
-                    last_log_idx_on_disk = req.get_last_log_idx();
-
-                /// if local logs detects invalid entry from leader we don't want to allow
-                /// leader to continue committing new logs
-                /// so we clear all new log entries until all local logs are processed
-                req.log_entries().clear();
-
-                break;
-            }
-            case nuraft::cb_func::StateMachineExecution:
-            {
-                if (state_machine->last_commit_index() >= last_log_idx_on_disk)
-                    preprocess_logs();
-                break;
-            }
-            default:
-                break;
-        }
-    }
-
     const auto follower_preappend = [&](const auto & entry)
     {
         if (entry->get_val_type() != nuraft::app_log)
@@ -1044,7 +908,7 @@ nuraft::cb_func::ReturnCode KeeperServer::callbackFunc(nuraft::cb_func::Type typ
                 size_t request_end_position = 0;
                 auto request_for_session = state_machine->parseRequest(*entry_buf, /*final=*/false, &serialization_version, &request_end_position);
                 request_for_session->zxid = next_zxid;
-                auto digest_after_preprocessing = state_machine->preprocess(*request_for_session);
+                auto digest_after_preprocessing = state_machine->preprocess(*request_for_session, /*lock_mutex=*/ true);
                 if (!digest_after_preprocessing)
                     return nuraft::cb_func::ReturnCode::ReturnNull;
 

@@ -52,8 +52,6 @@ private:
         void commit_in_bg() override;
         void append_entries_in_bg() override;
 
-        std::unique_lock<std::recursive_mutex> lockRaft();
-
         bool isCommitInProgress() const;
 
         void setServingRequest(bool value);
@@ -81,9 +79,9 @@ private:
 
     const int server_id;
 
-    nuraft::ptr<IKeeperStateMachine> state_machine;
-
     nuraft::ptr<KeeperStateManager> state_manager;
+
+    nuraft::ptr<IKeeperStateMachine> state_machine;
 
     nuraft::ptr<KeeperRaftServer> raft_instance; // TSA_GUARDED_BY(server_write_mutex);
     nuraft::ptr<nuraft::asio_service> asio_service;

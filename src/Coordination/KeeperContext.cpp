@@ -632,40 +632,17 @@ void KeeperContext::updateSettings(CoordinationSettingsPtr new_settings)
 
 bool KeeperContext::setShutdownCalled()
 {
-    std::unique_lock local_logs_preprocessed_lock(local_logs_preprocessed_cv_mutex);
     std::unique_lock last_committed_log_idx_lock(last_committed_log_idx_cv_mutex);
 
     if (!shutdown_called.exchange(true))
     {
-        local_logs_preprocessed_lock.unlock();
         last_committed_log_idx_lock.unlock();
 
-        local_logs_preprocessed_cv.notify_all();
         last_committed_log_idx_cv.notify_all();
         return true;
     }
 
     return false;
-}
-
-void KeeperContext::setLocalLogsPreprocessed()
-{
-    {
-        std::lock_guard lock(local_logs_preprocessed_cv_mutex);
-        local_logs_preprocessed = true;
-    }
-    local_logs_preprocessed_cv.notify_all();
-}
-
-bool KeeperContext::localLogsPreprocessed() const
-{
-    return local_logs_preprocessed;
-}
-
-void KeeperContext::waitLocalLogsPreprocessedOrShutdown()
-{
-    std::unique_lock lock(local_logs_preprocessed_cv_mutex);
-    local_logs_preprocessed_cv.wait(lock, [this]{ return shutdown_called || local_logs_preprocessed; });
 }
 
 const CoordinationSettings & KeeperContext::getFixedCoordinationSettings() const

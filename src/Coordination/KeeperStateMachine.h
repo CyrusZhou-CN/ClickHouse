@@ -20,8 +20,8 @@ using KeeperResponseCallback = std::function<void(KeeperResponseForSession)>; //
 using SnapshotsQueue = ConcurrentBoundedQueue<CreateSnapshotTask>;
 
 struct KeeperStorageStats;
-
 struct ISnapshotLoader;
+class KeeperLogStore;
 
 class IKeeperStateMachine : public nuraft::state_machine
 {
@@ -33,10 +33,12 @@ public:
         SnapshotsQueue & snapshots_queue_,
         const KeeperContextPtr & keeper_context_,
         KeeperSnapshotManagerS3 * snapshot_manager_s3_,
+        KeeperLogStore * log_store_,
         CommitCallback commit_callback_,
         const std::string & superdigest_);
 
-    /// Read state from the latest snapshot
+    /// Read committed state from the latest snapshot, init log store, and preprocess uncommitted
+    /// log entries.
     virtual void init() = 0;
 
     enum ZooKeeperLogSerializationVersion
@@ -64,7 +66,7 @@ public:
 
     static nuraft::ptr<nuraft::buffer> getZooKeeperLogEntry(const KeeperRequestForSession & request_for_session);
 
-    virtual std::optional<KeeperDigest> preprocess(const KeeperRequestForSession & request_for_session) = 0;
+    virtual std::optional<KeeperDigest> preprocess(const KeeperRequestForSession & request_for_session, bool lock_mutex) = 0;
 
     void commit_config(const uint64_t log_idx, nuraft::ptr<nuraft::cluster_config> & new_conf) override; /// NOLINT
 
@@ -201,6 +203,8 @@ protected:
 
     KeeperSnapshotManagerS3 * snapshot_manager_s3;
 
+    KeeperLogStore * log_store;
+
     virtual KeeperResponseForSession processReconfiguration(const KeeperRequestForSession & request_for_session)
         = 0;
 };
@@ -216,13 +220,14 @@ public:
         SnapshotsQueue & snapshots_queue_,
         const KeeperContextPtr & keeper_context_,
         KeeperSnapshotManagerS3 * snapshot_manager_s3_,
+        KeeperLogStore * log_store_,
         CommitCallback commit_callback_ = {},
         const std::string & superdigest_ = "");
 
     /// Read state from the latest snapshot
     void init() override;
 
-    std::optional<KeeperDigest> preprocess(const KeeperRequestForSession & request_for_session) override;
+    std::optional<KeeperDigest> preprocess(const KeeperRequestForSession & request_for_session, bool lock_mutex) override;
 
     nuraft::ptr<nuraft::buffer> pre_commit(uint64_t log_idx, nuraft::buffer & data) override;
 
@@ -298,6 +303,10 @@ private:
     KeeperSnapshotManager<Storage> snapshot_manager;
 
     KeeperResponseForSession processReconfiguration(const KeeperRequestForSession & request_for_session) override;
+
+    /// Call after loading `storage` from snapshot.
+    /// Does preprocessRequest on log entries to populate storage's UncommittedState.
+    void preprocessUncommittedLogEntries(uint64_t start_idx, uint64_t end_idx, nuraft::ptr<std::vector<nuraft::ptr<nuraft::log_entry>>> entries = nullptr);
 };
 
 }

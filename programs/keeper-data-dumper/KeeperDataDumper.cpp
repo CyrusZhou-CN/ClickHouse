@@ -80,7 +80,7 @@ int mainEntryClickHouseKeeperDataDumper(int argc, char ** argv)
     keeper_context->setLogDisk(std::make_shared<DB::DiskLocal>("LogDisk", argv[2]));
     keeper_context->setSnapshotDisk(std::make_shared<DB::DiskLocal>("SnapshotDisk", argv[1]));
 
-    auto state_machine = std::make_shared<KeeperStateMachine<DB::KeeperMemoryStorage>>(nullptr, snapshots_queue, keeper_context, nullptr);
+    auto state_machine = std::make_shared<KeeperStateMachine<DB::KeeperMemoryStorage>>(nullptr, snapshots_queue, keeper_context, nullptr, nullptr);
     state_machine->init();
     size_t last_commited_index = state_machine->last_commit_index();
 

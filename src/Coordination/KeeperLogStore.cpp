@@ -29,8 +29,10 @@ uint64_t KeeperLogStore::start_index() const
 
 void KeeperLogStore::init(uint64_t last_commited_log_index, uint64_t logs_to_keep)
 {
+    chassert(!is_initialized.load());
     ProfiledExclusiveLock lock(changelog_lock, ProfileEvents::KeeperChangelogLockWaitMicroseconds);
     changelog.readChangelogAndInitWriter(last_commited_log_index, logs_to_keep);
+    is_initialized.store(true);
 }
 
 uint64_t KeeperLogStore::next_slot() const

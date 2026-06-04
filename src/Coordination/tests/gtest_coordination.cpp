@@ -141,7 +141,7 @@ struct SimpliestRaftServer
         , state_machine(nuraft::cs_new<StateMachine>())
         , state_manager(nuraft::cs_new<DB::KeeperStateManager>(server_id, hostname, port, keeper_context))
     {
-        state_manager->loadLogStore(1, 0);
+        state_manager->getLogStore()->init(1, 0);
         nuraft::raft_params params;
         params.heart_beat_interval_ = 100;
         params.election_timeout_lower_bound_ = 200;
@@ -279,7 +279,7 @@ void testLogAndStateMachine(
     SnapshotsQueue snapshots_queue{1};
 
     auto keeper_context = get_keeper_context();
-    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, keeper_context, nullptr);
+    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, keeper_context, nullptr, nullptr);
 
     state_machine->init();
     DB::KeeperLogStore changelog(
@@ -326,7 +326,7 @@ void testLogAndStateMachine(
 
     SnapshotsQueue snapshots_queue1{1};
     keeper_context = get_keeper_context();
-    auto restore_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue1, keeper_context, nullptr);
+    auto restore_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue1, keeper_context, nullptr, nullptr);
     restore_machine->init();
     EXPECT_EQ(restore_machine->last_commit_index(), total_logs - total_logs % (*settings)[DB::CoordinationSetting::snapshot_distance]);
 
@@ -450,7 +450,7 @@ TYPED_TEST(CoordinationTest, TestEphemeralNodeRemove)
 
     SnapshotsQueue snapshots_queue{1};
 
-    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr);
+    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr, nullptr);
     state_machine->init();
 
     std::shared_ptr<ZooKeeperCreateRequest> request_c = std::make_shared<ZooKeeperCreateRequest>();
@@ -488,7 +488,7 @@ TYPED_TEST(CoordinationTest, TestCreateNodeWithAuthSchemeForAclWhenAuthIsPrecomm
 
     SnapshotsQueue snapshots_queue{1};
 
-    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr);
+    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr, nullptr);
     state_machine->init();
 
     String user_auth_data = "test_user:test_password";
@@ -545,7 +545,7 @@ TYPED_TEST(CoordinationTest, TestPreprocessWhenCloseSessionIsPrecommitted)
     int64_t session_with_auth = 2;
     size_t term = 0;
 
-    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr);
+    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr, nullptr);
     state_machine->init();
 
     auto & storage = state_machine->getStorageUnsafe();
@@ -729,7 +729,7 @@ TYPED_TEST(CoordinationTest, TestMultiRequestWithNoAuth)
     int64_t session_with_auth = 2;
     size_t term = 0;
 
-    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr);
+    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr, nullptr);
     state_machine->init();
 
     auto & storage = state_machine->getStorageUnsafe();
@@ -781,7 +781,7 @@ TYPED_TEST(CoordinationTest, TestSetACLWithAuthSchemeForAclWhenAuthIsPrecommitte
     SnapshotsQueue snapshots_queue{1};
 
     using Storage = typename TestFixture::Storage;
-    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr);
+    auto state_machine = std::make_shared<KeeperStateMachine<Storage>>(nullptr, snapshots_queue, this->keeper_context, nullptr, nullptr);
     state_machine->init();
 
     String user_auth_data = "test_user:test_password";
@@ -856,7 +856,7 @@ TYPED_TEST(CoordinationTest, TestDurableState)
     const auto reload_state_manager = [&]
     {
         state_manager.emplace(1, "localhost", 9181, this->keeper_context);
-        state_manager->loadLogStore(1, 0);
+        state_manager->getLogStore()->init(1, 0);
     };
 
     reload_state_manager();

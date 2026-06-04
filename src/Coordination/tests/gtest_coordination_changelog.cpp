@@ -27,7 +27,6 @@ public:
 
         auto settings = std::make_shared<DB::CoordinationSettings>();
         keeper_context = std::make_shared<DB::KeeperContext>(true, settings);
-        keeper_context->setLocalLogsPreprocessed();
         extension = enable_compression ? ".zstd" : "";
     }
 

@@ -32,8 +32,6 @@ public:
         int port,
         KeeperContextPtr keeper_context_);
 
-    void loadLogStore(uint64_t last_commited_index, uint64_t logs_to_keep);
-
     /// Flush logstore and call shutdown of background thread
     void flushAndShutDownLogStore();
 
@@ -52,6 +50,7 @@ public:
     nuraft::ptr<nuraft::srv_state> read_state() override;
 
     nuraft::ptr<nuraft::log_store> load_log_store() override { return log_store; }
+    nuraft::ptr<KeeperLogStore> getLogStore() { return log_store; }
 
     int32_t server_id() override { return my_server_id; }
 
@@ -124,7 +123,6 @@ private:
     mutable std::mutex configuration_wrapper_mutex;
     KeeperConfigurationWrapper configuration_wrapper TSA_GUARDED_BY(configuration_wrapper_mutex);
 
-    bool log_store_initialized = false;
     nuraft::ptr<KeeperLogStore> log_store;
 
     const String server_state_file_name;

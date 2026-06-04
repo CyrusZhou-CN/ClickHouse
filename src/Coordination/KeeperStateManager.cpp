@@ -328,12 +328,6 @@ KeeperStateManager::KeeperStateManager(
 {
 }
 
-void KeeperStateManager::loadLogStore(uint64_t last_commited_index, uint64_t logs_to_keep)
-{
-    log_store->init(last_commited_index, logs_to_keep);
-    log_store_initialized = true;
-}
-
 void KeeperStateManager::system_exit(const int /* exit_code */)
 {
     /// NuRaft itself calls exit() which will call atexit handlers
@@ -430,7 +424,7 @@ void KeeperStateManager::save_state(const nuraft::srv_state & state)
 
 nuraft::ptr<nuraft::srv_state> KeeperStateManager::read_state()
 {
-    chassert(log_store_initialized);
+    chassert(log_store->isInitialized());
 
     const auto & old_path = getOldServerStatePath();
 
